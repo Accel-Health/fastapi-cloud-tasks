@@ -1,15 +1,20 @@
 # Standard Library Imports
 import datetime
+import logging
 
 # Third Party Imports
 from fastapi.routing import APIRoute
 from google.cloud import tasks_v2
 from google.protobuf import timestamp_pb2
+from google.api_core import retry
+from google.api_core.exceptions import ServiceUnavailable, DeadlineExceeded, InternalServerError, ResourceExhausted
 
 # Imports from this repository
 from fastapi_cloud_tasks.exception import BadMethodException
 from fastapi_cloud_tasks.hooks import DelayedTaskHook
 from fastapi_cloud_tasks.requester import Requester
+
+logger = logging.getLogger(__name__)
 
 
 class Delayer(Requester):
@@ -24,6 +29,10 @@ class Delayer(Requester):
         task_create_timeout: float = 10.0,
         countdown: int = 0,
         task_id: str = None,
+        max_retries: int = 5,
+        initial_retry_delay: float = 0.5,
+        max_retry_delay: float = 30.0,
+        retry_multiplier: float = 2.0,
     ) -> None:
         super().__init__(route=route, base_url=base_url)
         self.queue_path = queue_path
@@ -34,6 +43,24 @@ class Delayer(Requester):
         self.method = _task_method(route.methods)
         self.client = client
         self.pre_create_hook = pre_create_hook
+        
+        # Retry configuration
+        self.retry = retry.Retry(
+            initial=initial_retry_delay,
+            maximum=max_retry_delay,
+            multiplier=retry_multiplier,
+            predicate=retry.if_exception_type(
+                ServiceUnavailable,
+                DeadlineExceeded,
+                InternalServerError,
+                ResourceExhausted
+            ),
+            deadline=task_create_timeout,
+            on_error=lambda exc: logger.warning(
+                f"Task creation attempt failed: {exc}. Retrying...",
+                exc_info=True
+            )
+        )
 
     def delay(self, **kwargs):
         # Create http request
@@ -61,7 +88,8 @@ class Delayer(Requester):
         request = self.pre_create_hook(request)
 
         return self.client.create_task(
-            request=request, timeout=self.task_create_timeout
+            request=request,
+            retry=self.retry
         )
 
     def _schedule(self):
