@@ -24,7 +24,7 @@ class Delayer(Requester):
         route: APIRoute,
         base_url: str,
         queue_path: str,
-        client: tasks_v2.CloudTasksClient,
+        client: tasks_v2.CloudTasksAsyncClient,
         pre_create_hook: DelayedTaskHook,
         task_create_timeout: float = 10.0,
         countdown: int = 0,
@@ -62,7 +62,7 @@ class Delayer(Requester):
             )
         )
 
-    def delay(self, **kwargs):
+    async def delay(self, **kwargs):
         # Create http request
         request = tasks_v2.HttpRequest()
         request.http_method = self.method
@@ -87,7 +87,7 @@ class Delayer(Requester):
 
         request = self.pre_create_hook(request)
 
-        return self.client.create_task(
+        return await self.client.create_task(
             request=request,
             retry=self.retry
         )
