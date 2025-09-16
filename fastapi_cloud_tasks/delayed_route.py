@@ -13,7 +13,7 @@ from fastapi_cloud_tasks.hooks import noop_hook
 from fastapi_cloud_tasks.utils import ensure_queue
 
 
-async def DelayedRouteBuilder(
+def DelayedRouteBuilder(
     *,
     base_url: str,
     queue_path: str,
@@ -51,10 +51,11 @@ async def DelayedRouteBuilder(
     if pre_create_hook is None:
         pre_create_hook = noop_hook
 
-    if auto_create_queue:
-        await ensure_queue(client=client, path=queue_path)
-
     class TaskRouteMixin(APIRoute):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._queue_created = False
+
         def get_route_handler(self) -> Callable:
             original_route_handler = super().get_route_handler()
             self.endpoint.options = self.delayOptions
@@ -79,6 +80,10 @@ async def DelayedRouteBuilder(
             )
 
         async def delay(self, **kwargs):
+            # Ensure queue exists on first delay call if auto_create_queue is enabled
+            if auto_create_queue and not self._queue_created:
+                await ensure_queue(client=client, path=queue_path)
+                self._queue_created = True
             return await self.delayOptions().delay(**kwargs)
 
     return TaskRouteMixin
