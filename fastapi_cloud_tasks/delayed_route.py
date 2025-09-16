@@ -46,15 +46,16 @@ def DelayedRouteBuilder(
     ```
     """
     if client is None:
-        client = tasks_v2.CloudTasksClient()
+        client = tasks_v2.CloudTasksAsyncClient()
 
     if pre_create_hook is None:
         pre_create_hook = noop_hook
 
-    if auto_create_queue:
-        ensure_queue(client=client, path=queue_path)
-
     class TaskRouteMixin(APIRoute):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._queue_created = False
+
         def get_route_handler(self) -> Callable:
             original_route_handler = super().get_route_handler()
             self.endpoint.options = self.delayOptions
@@ -78,7 +79,11 @@ def DelayedRouteBuilder(
                 **delayOpts,
             )
 
-        def delay(self, **kwargs):
-            return self.delayOptions().delay(**kwargs)
+        async def delay(self, **kwargs):
+            # Ensure queue exists on first delay call if auto_create_queue is enabled
+            if auto_create_queue and not self._queue_created:
+                await ensure_queue(client=client, path=queue_path)
+                self._queue_created = True
+            return await self.delayOptions().delay(**kwargs)
 
     return TaskRouteMixin

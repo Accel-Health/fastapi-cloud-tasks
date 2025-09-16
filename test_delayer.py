@@ -13,15 +13,15 @@ class _TestRetry:  # Prefix with underscore to prevent pytest from collecting it
         self.target_func = target_func
         self.max_retries = max_retries
         self.attempts = 0
-    
-    def __call__(self, *args, **kwargs):
+
+    async def __call__(self, *args, **kwargs):
         self.attempts += 1
         try:
-            return self.target_func(*args, **kwargs)
+            return await self.target_func(*args, **kwargs)
         except ServiceUnavailable:
             if self.attempts > self.max_retries:
                 raise
-            return self(*args, **kwargs)
+            return await self(*args, **kwargs)
 
 def create_mock_route():
     """Helper function to create a properly mocked APIRoute"""
@@ -41,7 +41,7 @@ def create_mock_route():
 def test_delayer_init_with_retry_config():
     # Mock dependencies
     mock_route = create_mock_route()
-    mock_client = Mock(spec=tasks_v2.CloudTasksClient)
+    mock_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
     
     # Create delayer instance with custom retry config
     delayer = Delayer(
@@ -66,13 +66,13 @@ def test_delayer_init_with_retry_config():
 async def test_delay_with_retries():
     # Mock dependencies
     mock_route = create_mock_route()
-    mock_client = Mock(spec=tasks_v2.CloudTasksClient)
+    mock_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
     
     # Configure mock to fail twice with ServiceUnavailable, then succeed
     success_response = Mock()
     call_count = 0
     
-    def mock_create_task(*args, **kwargs):
+    async def mock_create_task(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count < 3:
@@ -98,7 +98,7 @@ async def test_delay_with_retries():
     # Mock sleep to avoid delays
     with patch('time.sleep'):
         # Call delay method
-        result = delayer.delay()
+        result = await delayer.delay()
         
         # Assert create_task was called the expected number of times
         assert call_count == 3
@@ -108,12 +108,12 @@ async def test_delay_with_retries():
 async def test_delay_max_retries_exceeded():
     # Mock dependencies
     mock_route = create_mock_route()
-    mock_client = Mock(spec=tasks_v2.CloudTasksClient)
+    mock_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
     
     # Configure mock to always fail with ServiceUnavailable
     call_count = 0
     
-    def mock_create_task(*args, **kwargs):
+    async def mock_create_task(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         raise ServiceUnavailable("Broken pipe")
@@ -138,7 +138,7 @@ async def test_delay_max_retries_exceeded():
     with patch('time.sleep'):
         # Call delay method and expect it to raise after max retries
         with pytest.raises(ServiceUnavailable):
-            delayer.delay()
+            await delayer.delay()
         
         # Assert create_task was called max_retries + 1 times
         assert call_count == 4  # Initial try + 3 retries 

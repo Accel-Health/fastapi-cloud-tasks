@@ -13,14 +13,14 @@ def location_path(*, project: str, location: str, **ignored):
 
 
 def queue_path(*, project: str, location: str, queue: str):
-    return tasks_v2.CloudTasksClient.queue_path(
+    return tasks_v2.CloudTasksAsyncClient.queue_path(
         project=project, location=location, queue=queue
     )
 
 
-def ensure_queue(
+async def ensure_queue(
     *,
-    client: tasks_v2.CloudTasksClient,
+    client: tasks_v2.CloudTasksAsyncClient,
     path: str,
     **kwargs,
 ):
@@ -31,7 +31,7 @@ def ensure_queue(
         queue=tasks_v2.Queue(name=path, **kwargs),
     )
     try:
-        client.create_queue(request=create_req)
+        await client.create_queue(request=create_req)
     except AlreadyExists:
         pass
 
@@ -39,4 +39,4 @@ def ensure_queue(
 def emulator_client(*, host="localhost:8123"):
     channel = grpc.insecure_channel(host)
     transport = transports.CloudTasksGrpcTransport(channel=channel)
-    return tasks_v2.CloudTasksClient(transport=transport)
+    return tasks_v2.CloudTasksAsyncClient(transport=transport)
