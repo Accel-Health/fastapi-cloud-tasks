@@ -16,7 +16,7 @@ setup(
     long_description_content_type="text/markdown",
     licesnse="MIT",
     packages=["fastapi_cloud_tasks"],
-    install_requires=["google-cloud-tasks", "google-cloud-scheduler", "fastapi"],
+    install_requires=["google-cloud-tasks", "google-cloud-scheduler", "fastapi>=0.135.2"],
     test_requires=[],
     zip_safe=False,
 )
