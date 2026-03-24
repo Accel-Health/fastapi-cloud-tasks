@@ -11,7 +11,6 @@ from urllib.parse import urlunparse
 from fastapi.dependencies.utils import request_params_to_args
 from fastapi.encoders import jsonable_encoder
 from fastapi.routing import APIRoute
-from pydantic.v1.error_wrappers import ErrorWrapper
 
 # Imports from this repository
 from fastapi_cloud_tasks.exception import MissingParamError
@@ -92,20 +91,28 @@ class Requester:
         if body_field and body_field.name:
             got_body = values.get(body_field.name, None)
             if got_body is None:
-                if body_field.required:
+                if body_field.field_info.is_required():
                     raise MissingParamError(name=body_field.name)
                 got_body = body_field.get_default()
-            if not isinstance(got_body, body_field.type_):
-                raise WrongTypeError(field=body_field.name, type=body_field.type_)
-            body = json.dumps(jsonable_encoder(got_body)).encode()
+            validated, errors = body_field.validate(got_body)
+            if errors:
+                raise WrongTypeError(
+                    field=body_field.name, type=body_field.field_info.annotation
+                )
+            body = json.dumps(jsonable_encoder(validated)).encode()
         return body
 
 
-def _err_val(resp: Tuple[Dict, List[ErrorWrapper]]):
+def _err_val(resp: Tuple[Dict, List]):
     values, errors = resp
 
     if len(errors) != 0:
         # TODO: Log everything but raise first only
         # TODO: find a better way to raise and display these errors
-        raise errors[0].exc
+        error = errors[0]
+        if isinstance(error, dict):
+            raise ValueError(
+                f"{error.get('msg', 'Validation error')} at {error.get('loc', '')}"
+            )
+        raise error.exc
     return values
