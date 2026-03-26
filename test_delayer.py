@@ -1,5 +1,6 @@
+import inspect
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, AsyncMock
 from google.api_core.exceptions import ServiceUnavailable
 from google.cloud import tasks_v2
 from fastapi.routing import APIRoute
@@ -60,7 +61,7 @@ def test_delayer_init_with_retry_config():
     assert delayer.retry._initial == 0.5
     assert delayer.retry._maximum == 30.0
     assert delayer.retry._multiplier == 2.0
-    assert delayer.retry._deadline == delayer.task_create_timeout
+    assert delayer.retry._timeout == delayer.task_create_timeout
 
 @pytest.mark.asyncio
 async def test_delay_with_retries():
@@ -141,4 +142,38 @@ async def test_delay_max_retries_exceeded():
             await delayer.delay()
         
         # Assert create_task was called max_retries + 1 times
-        assert call_count == 4  # Initial try + 3 retries 
+        assert call_count == 4  # Initial try + 3 retries
+
+
+@pytest.mark.asyncio
+async def test_retry_wraps_async_callable_correctly():
+    """Verify the Delayer's retry object can properly wrap and await an async
+    callable. A sync Retry would return an unawaited coroutine here; only
+    AsyncRetry correctly awaits the inner call."""
+    mock_route = create_mock_route()
+    mock_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
+    mock_client.create_task = AsyncMock()
+
+    delayer = Delayer(
+        route=mock_route,
+        base_url="http://test.com",
+        queue_path="projects/test/locations/test/queues/test",
+        client=mock_client,
+        pre_create_hook=noop_hook,
+    )
+
+    # Test the retry decorator directly against an async function,
+    # exactly as google.api_core.gapic_v1.method._GapicCallable does.
+    called = False
+
+    async def fake_rpc():
+        nonlocal called
+        called = True
+        return "ok"
+
+    wrapped = delayer.retry(fake_rpc)
+    result = await wrapped()
+
+    assert called, "async RPC was never awaited — retry is wrapping with sync def"
+    assert result == "ok"
+    assert not inspect.isawaitable(result) 
