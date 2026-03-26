@@ -1,4 +1,3 @@
-import asyncio
 import inspect
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
@@ -147,15 +146,13 @@ async def test_delay_max_retries_exceeded():
 
 
 @pytest.mark.asyncio
-async def test_delay_result_is_not_coroutine():
-    """Verify that delay() awaits the actual RPC call and returns a real result,
-    not an unawaited coroutine. This catches the bug where using sync Retry
-    instead of AsyncRetry causes the gRPC call to never execute."""
+async def test_retry_wraps_async_callable_correctly():
+    """Verify the Delayer's retry object can properly wrap and await an async
+    callable. A sync Retry would return an unawaited coroutine here; only
+    AsyncRetry correctly awaits the inner call."""
     mock_route = create_mock_route()
     mock_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
-
-    expected_response = tasks_v2.Task(name="projects/p/locations/l/queues/q/tasks/t1")
-    mock_client.create_task = AsyncMock(return_value=expected_response)
+    mock_client.create_task = AsyncMock()
 
     delayer = Delayer(
         route=mock_route,
@@ -165,13 +162,18 @@ async def test_delay_result_is_not_coroutine():
         pre_create_hook=noop_hook,
     )
 
-    result = await delayer.delay()
+    # Test the retry decorator directly against an async function,
+    # exactly as google.api_core.gapic_v1.method._GapicCallable does.
+    called = False
 
-    # The critical assertion: result must be the actual response, not a coroutine.
-    # With sync Retry wrapping an async call, result would be a coroutine object.
-    assert not inspect.isawaitable(result), (
-        f"delay() returned an unawaitable {type(result)} — "
-        "the RPC was never actually executed"
-    )
-    assert result == expected_response
-    mock_client.create_task.assert_called_once() 
+    async def fake_rpc():
+        nonlocal called
+        called = True
+        return "ok"
+
+    wrapped = delayer.retry(fake_rpc)
+    result = await wrapped()
+
+    assert called, "async RPC was never awaited — retry is wrapping with sync def"
+    assert result == "ok"
+    assert not inspect.isawaitable(result) 
