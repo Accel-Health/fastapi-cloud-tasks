@@ -1,5 +1,7 @@
+import asyncio
+import inspect
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, AsyncMock
 from google.api_core.exceptions import ServiceUnavailable
 from google.cloud import tasks_v2
 from fastapi.routing import APIRoute
@@ -60,7 +62,7 @@ def test_delayer_init_with_retry_config():
     assert delayer.retry._initial == 0.5
     assert delayer.retry._maximum == 30.0
     assert delayer.retry._multiplier == 2.0
-    assert delayer.retry._deadline == delayer.task_create_timeout
+    assert delayer.retry._timeout == delayer.task_create_timeout
 
 @pytest.mark.asyncio
 async def test_delay_with_retries():
@@ -141,4 +143,35 @@ async def test_delay_max_retries_exceeded():
             await delayer.delay()
         
         # Assert create_task was called max_retries + 1 times
-        assert call_count == 4  # Initial try + 3 retries 
+        assert call_count == 4  # Initial try + 3 retries
+
+
+@pytest.mark.asyncio
+async def test_delay_result_is_not_coroutine():
+    """Verify that delay() awaits the actual RPC call and returns a real result,
+    not an unawaited coroutine. This catches the bug where using sync Retry
+    instead of AsyncRetry causes the gRPC call to never execute."""
+    mock_route = create_mock_route()
+    mock_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
+
+    expected_response = tasks_v2.Task(name="projects/p/locations/l/queues/q/tasks/t1")
+    mock_client.create_task = AsyncMock(return_value=expected_response)
+
+    delayer = Delayer(
+        route=mock_route,
+        base_url="http://test.com",
+        queue_path="projects/test/locations/test/queues/test",
+        client=mock_client,
+        pre_create_hook=noop_hook,
+    )
+
+    result = await delayer.delay()
+
+    # The critical assertion: result must be the actual response, not a coroutine.
+    # With sync Retry wrapping an async call, result would be a coroutine object.
+    assert not inspect.isawaitable(result), (
+        f"delay() returned an unawaitable {type(result)} — "
+        "the RPC was never actually executed"
+    )
+    assert result == expected_response
+    mock_client.create_task.assert_called_once() 

@@ -6,7 +6,7 @@ import logging
 from fastapi.routing import APIRoute
 from google.cloud import tasks_v2
 from google.protobuf import timestamp_pb2
-from google.api_core import retry
+from google.api_core import retry_async
 from google.api_core.exceptions import ServiceUnavailable, DeadlineExceeded, InternalServerError, ResourceExhausted
 
 # Imports from this repository
@@ -44,12 +44,12 @@ class Delayer(Requester):
         self.client = client
         self.pre_create_hook = pre_create_hook
         
-        # Retry configuration
-        self.retry = retry.Retry(
+        # Retry configuration - must use AsyncRetry since delay() is async
+        self.retry = retry_async.AsyncRetry(
             initial=initial_retry_delay,
             maximum=max_retry_delay,
             multiplier=retry_multiplier,
-            predicate=retry.if_exception_type(
+            predicate=retry_async.if_exception_type(
                 ServiceUnavailable,
                 DeadlineExceeded,
                 InternalServerError,
