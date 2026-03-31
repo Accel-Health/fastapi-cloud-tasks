@@ -1,5 +1,7 @@
 # Standard Library Imports
+import asyncio
 import datetime
+import inspect
 import logging
 
 # Third Party Imports
@@ -109,10 +111,23 @@ class Delayer(Requester):
                 "Pass a sync client to DelayedRouteBuilder, or use adelay() with an async client."
             )
         request = self._build_task_request(**kwargs)
-        return self.client.create_task(
+        result = self.client.create_task(
             request=request,
             retry=self.sync_retry,
         )
+        # Guard against silent task loss: if create_task returns a coroutine
+        # (e.g. because an async client was passed as the sync client),
+        # close it and raise immediately rather than silently dropping the task.
+        if inspect.isawaitable(result):
+            # Close the coroutine to prevent "coroutine was never awaited" warning
+            if asyncio.iscoroutine(result):
+                result.close()
+            raise RuntimeError(
+                "delay() received a coroutine from create_task — the task was NOT created. "
+                "This usually means an async CloudTasksAsyncClient was passed as the sync client. "
+                "Use the async_client parameter and call adelay() instead."
+            )
+        return result
 
     async def adelay(self, **kwargs):
         """Async delay - dispatches the task using the async client."""
