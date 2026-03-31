@@ -91,11 +91,47 @@ def test_sync_delay():
 
 @pytest.mark.asyncio
 async def test_async_adelay():
-    """Test that async adelay() awaits client.create_task."""
+    """Test that async adelay() awaits async_client.create_task."""
     mock_route = create_mock_route()
-    mock_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
+    mock_async_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
     success_response = Mock()
-    mock_client.create_task = AsyncMock(return_value=success_response)
+    mock_async_client.create_task = AsyncMock(return_value=success_response)
+
+    delayer = Delayer(
+        route=mock_route,
+        base_url="http://test.com",
+        queue_path="projects/test/locations/test/queues/test",
+        async_client=mock_async_client,
+        pre_create_hook=noop_hook,
+    )
+
+    result = await delayer.adelay()
+    assert result == success_response
+    mock_async_client.create_task.assert_called_once()
+
+
+def test_delay_without_sync_client_raises():
+    """Test that delay() raises RuntimeError when no sync client is provided."""
+    mock_route = create_mock_route()
+    mock_async_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
+
+    delayer = Delayer(
+        route=mock_route,
+        base_url="http://test.com",
+        queue_path="projects/test/locations/test/queues/test",
+        async_client=mock_async_client,
+        pre_create_hook=noop_hook,
+    )
+
+    with pytest.raises(RuntimeError, match="delay\\(\\) requires a sync CloudTasksClient"):
+        delayer.delay()
+
+
+@pytest.mark.asyncio
+async def test_adelay_without_async_client_raises():
+    """Test that adelay() raises RuntimeError when no async client is provided."""
+    mock_route = create_mock_route()
+    mock_client = Mock(spec=tasks_v2.CloudTasksClient)
 
     delayer = Delayer(
         route=mock_route,
@@ -105,16 +141,15 @@ async def test_async_adelay():
         pre_create_hook=noop_hook,
     )
 
-    result = await delayer.adelay()
-    assert result == success_response
-    mock_client.create_task.assert_called_once()
+    with pytest.raises(RuntimeError, match="adelay\\(\\) requires an async CloudTasksAsyncClient"):
+        await delayer.adelay()
 
 
 @pytest.mark.asyncio
 async def test_adelay_with_retries():
     # Mock dependencies
     mock_route = create_mock_route()
-    mock_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
+    mock_async_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
 
     # Configure mock to fail twice with ServiceUnavailable, then succeed
     success_response = Mock()
@@ -129,13 +164,13 @@ async def test_adelay_with_retries():
 
     # Create a test retry instance
     test_retry = _TestRetry(mock_create_task, max_retries=3)
-    mock_client.create_task = test_retry
+    mock_async_client.create_task = test_retry
 
     delayer = Delayer(
         route=mock_route,
         base_url="http://test.com",
         queue_path="projects/test/locations/test/queues/test",
-        client=mock_client,
+        async_client=mock_async_client,
         pre_create_hook=noop_hook,
         max_retries=3,
         initial_retry_delay=0.5,
@@ -156,7 +191,7 @@ async def test_adelay_with_retries():
 async def test_adelay_max_retries_exceeded():
     # Mock dependencies
     mock_route = create_mock_route()
-    mock_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
+    mock_async_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
 
     # Configure mock to always fail with ServiceUnavailable
     call_count = 0
@@ -168,13 +203,13 @@ async def test_adelay_max_retries_exceeded():
 
     # Create a test retry instance
     test_retry = _TestRetry(mock_create_task, max_retries=3)
-    mock_client.create_task = test_retry
+    mock_async_client.create_task = test_retry
 
     delayer = Delayer(
         route=mock_route,
         base_url="http://test.com",
         queue_path="projects/test/locations/test/queues/test",
-        client=mock_client,
+        async_client=mock_async_client,
         pre_create_hook=noop_hook,
         max_retries=3,
         initial_retry_delay=0.5,
@@ -198,14 +233,14 @@ async def test_retry_wraps_async_callable_correctly():
     callable. A sync Retry would return an unawaited coroutine here; only
     AsyncRetry correctly awaits the inner call."""
     mock_route = create_mock_route()
-    mock_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
-    mock_client.create_task = AsyncMock()
+    mock_async_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
+    mock_async_client.create_task = AsyncMock()
 
     delayer = Delayer(
         route=mock_route,
         base_url="http://test.com",
         queue_path="projects/test/locations/test/queues/test",
-        client=mock_client,
+        async_client=mock_async_client,
         pre_create_hook=noop_hook,
     )
 

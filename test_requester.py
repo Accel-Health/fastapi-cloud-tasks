@@ -334,11 +334,11 @@ class TestDelayedRouteBuilderAsyncIntegration:
 
         from fastapi_cloud_tasks import DelayedRouteBuilder
 
-        mock_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
-        mock_client.create_task = AsyncMock(return_value=Mock())
+        mock_async_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
+        mock_async_client.create_task = AsyncMock(return_value=Mock())
 
         DelayedRoute = DelayedRouteBuilder(
-            client=mock_client,
+            async_client=mock_async_client,
             base_url="http://worker:8000",
             queue_path="projects/p/locations/l/queues/q",
             auto_create_queue=False,
@@ -357,7 +357,7 @@ class TestDelayedRouteBuilderAsyncIntegration:
         app = FastAPI()
         app.include_router(router)
 
-        self.mock_client = mock_client
+        self.mock_async_client = mock_async_client
         self.process_route = router.routes[0]
         self.simple_route = router.routes[1]
 
@@ -366,23 +366,23 @@ class TestDelayedRouteBuilderAsyncIntegration:
         await self.process_route.endpoint.adelay(
             task_id="abc", p=Payload(message="hello")
         )
-        self.mock_client.create_task.assert_called_once()
-        request = self.mock_client.create_task.call_args[1]["request"]
+        self.mock_async_client.create_task.assert_called_once()
+        request = self.mock_async_client.create_task.call_args[1]["request"]
         assert "/tasks/process/abc" in request.task.http_request.url
         assert b'"message": "hello"' in request.task.http_request.body
 
     @pytest.mark.asyncio
     async def test_adelay_with_default_body(self):
         await self.simple_route.endpoint.adelay()
-        self.mock_client.create_task.assert_called_once()
-        request = self.mock_client.create_task.call_args[1]["request"]
+        self.mock_async_client.create_task.assert_called_once()
+        request = self.mock_async_client.create_task.call_args[1]["request"]
         assert b'"message": "default"' in request.task.http_request.body
 
     @pytest.mark.asyncio
     async def test_adelay_options_override_countdown(self):
         await self.simple_route.endpoint.options(countdown=300).adelay()
-        self.mock_client.create_task.assert_called_once()
-        request = self.mock_client.create_task.call_args[1]["request"]
+        self.mock_async_client.create_task.assert_called_once()
+        request = self.mock_async_client.create_task.call_args[1]["request"]
         assert request.task.schedule_time is not None
 
     @pytest.mark.asyncio
@@ -390,12 +390,73 @@ class TestDelayedRouteBuilderAsyncIntegration:
         await self.simple_route.endpoint.options(
             base_url="http://other:9000"
         ).adelay()
-        self.mock_client.create_task.assert_called_once()
-        request = self.mock_client.create_task.call_args[1]["request"]
+        self.mock_async_client.create_task.assert_called_once()
+        request = self.mock_async_client.create_task.call_args[1]["request"]
         assert request.task.http_request.url.startswith("http://other:9000")
 
     @pytest.mark.asyncio
     async def test_adelay_with_task_id_deduplication(self):
         await self.simple_route.endpoint.options(task_id="dedup-123").adelay()
-        request = self.mock_client.create_task.call_args[1]["request"]
+        request = self.mock_async_client.create_task.call_args[1]["request"]
         assert request.task.name == "projects/p/locations/l/queues/q/tasks/dedup-123"
+
+
+class TestDelayedRouteBuilderClientMismatch:
+    """Test that using the wrong method for the client type raises a clear error."""
+
+    def test_delay_with_only_async_client_raises(self):
+        from unittest.mock import Mock
+
+        from google.cloud import tasks_v2
+
+        from fastapi_cloud_tasks import DelayedRouteBuilder
+
+        mock_async_client = Mock(spec=tasks_v2.CloudTasksAsyncClient)
+
+        DelayedRoute = DelayedRouteBuilder(
+            async_client=mock_async_client,
+            base_url="http://worker:8000",
+            queue_path="projects/p/locations/l/queues/q",
+            auto_create_queue=False,
+        )
+
+        router = APIRouter(route_class=DelayedRoute, prefix="/tasks")
+
+        @router.post("/simple")
+        async def simple(p: Payload = Payload(message="default")):
+            pass
+
+        app = FastAPI()
+        app.include_router(router)
+
+        with pytest.raises(RuntimeError, match="delay\\(\\) requires a sync"):
+            router.routes[0].endpoint.delay()
+
+    @pytest.mark.asyncio
+    async def test_adelay_with_only_sync_client_raises(self):
+        from unittest.mock import Mock
+
+        from google.cloud import tasks_v2
+
+        from fastapi_cloud_tasks import DelayedRouteBuilder
+
+        mock_client = Mock(spec=tasks_v2.CloudTasksClient)
+
+        DelayedRoute = DelayedRouteBuilder(
+            client=mock_client,
+            base_url="http://worker:8000",
+            queue_path="projects/p/locations/l/queues/q",
+            auto_create_queue=False,
+        )
+
+        router = APIRouter(route_class=DelayedRoute, prefix="/tasks")
+
+        @router.post("/simple")
+        async def simple(p: Payload = Payload(message="default")):
+            pass
+
+        app = FastAPI()
+        app.include_router(router)
+
+        with pytest.raises(RuntimeError, match="adelay\\(\\) requires an async"):
+            await router.routes[0].endpoint.adelay()

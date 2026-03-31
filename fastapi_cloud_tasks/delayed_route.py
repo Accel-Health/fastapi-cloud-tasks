@@ -20,6 +20,7 @@ def DelayedRouteBuilder(
     task_create_timeout: float = 10.0,
     pre_create_hook: DelayedTaskHook = None,
     client=None,
+    async_client=None,
     auto_create_queue=True,
 ):
     """
@@ -28,11 +29,13 @@ def DelayedRouteBuilder(
     It adds .delay (sync), .adelay (async), and .options methods to the
     original endpoint.
 
-    The ``client`` parameter accepts either a ``CloudTasksClient`` (sync) or
-    ``CloudTasksAsyncClient``.  When a sync client is provided, ``.delay()``
-    works out-of-the-box; ``.adelay()`` requires an async client.  If no client
-    is supplied, a sync ``CloudTasksClient`` is created by default so that
-    existing (sync) call-sites continue to work without changes.
+    Parameters:
+        client: A sync ``CloudTasksClient``.  Used by ``.delay()``.
+                Created automatically if neither ``client`` nor
+                ``async_client`` is provided.
+        async_client: An async ``CloudTasksAsyncClient``.  Used by
+                      ``.adelay()``.  Optional — only needed if you call
+                      ``.adelay()``.
 
     Example:
     ```
@@ -55,7 +58,8 @@ def DelayedRouteBuilder(
       app.include_router(delayed_router)
     ```
     """
-    if client is None:
+    # Default to a sync client when nothing is provided
+    if client is None and async_client is None:
         client = tasks_v2.CloudTasksClient()
 
     if pre_create_hook is None:
@@ -79,6 +83,7 @@ def DelayedRouteBuilder(
                 queue_path=queue_path,
                 task_create_timeout=task_create_timeout,
                 client=client,
+                async_client=async_client,
                 pre_create_hook=pre_create_hook,
             )
             if hasattr(self.endpoint, "_delayOptions"):
@@ -91,14 +96,14 @@ def DelayedRouteBuilder(
             )
 
         def delay(self, **kwargs):
-            if auto_create_queue and not self._queue_created:
+            if auto_create_queue and not self._queue_created and client is not None:
                 ensure_queue_sync(client=client, path=queue_path)
                 self._queue_created = True
             return self.delayOptions().delay(**kwargs)
 
         async def adelay(self, **kwargs):
-            if auto_create_queue and not self._queue_created:
-                await ensure_queue(client=client, path=queue_path)
+            if auto_create_queue and not self._queue_created and async_client is not None:
+                await ensure_queue(client=async_client, path=queue_path)
                 self._queue_created = True
             return await self.delayOptions().adelay(**kwargs)
 

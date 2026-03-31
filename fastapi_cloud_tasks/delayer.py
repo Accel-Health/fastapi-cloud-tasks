@@ -32,7 +32,8 @@ class Delayer(Requester):
         route: APIRoute,
         base_url: str,
         queue_path: str,
-        client,
+        client: tasks_v2.CloudTasksClient = None,
+        async_client: tasks_v2.CloudTasksAsyncClient = None,
         pre_create_hook: DelayedTaskHook,
         task_create_timeout: float = 10.0,
         countdown: int = 0,
@@ -50,6 +51,7 @@ class Delayer(Requester):
         self.task_id = task_id
         self.method = _task_method(route.methods)
         self.client = client
+        self.async_client = async_client
         self.pre_create_hook = pre_create_hook
 
         retry_kwargs = dict(
@@ -101,6 +103,11 @@ class Delayer(Requester):
 
     def delay(self, **kwargs):
         """Synchronous delay - dispatches the task using the sync client."""
+        if self.client is None:
+            raise RuntimeError(
+                "delay() requires a sync CloudTasksClient. "
+                "Pass a sync client to DelayedRouteBuilder, or use adelay() with an async client."
+            )
         request = self._build_task_request(**kwargs)
         return self.client.create_task(
             request=request,
@@ -109,8 +116,13 @@ class Delayer(Requester):
 
     async def adelay(self, **kwargs):
         """Async delay - dispatches the task using the async client."""
+        if self.async_client is None:
+            raise RuntimeError(
+                "adelay() requires an async CloudTasksAsyncClient. "
+                "Pass an async_client to DelayedRouteBuilder, or use delay() with a sync client."
+            )
         request = self._build_task_request(**kwargs)
-        return await self.client.create_task(
+        return await self.async_client.create_task(
             request=request,
             retry=self.async_retry,
         )
