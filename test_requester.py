@@ -252,8 +252,80 @@ class TestBodyDictCoercion:
 # --- Integration: DelayedRouteBuilder end-to-end ---
 
 
-class TestDelayedRouteBuilderIntegration:
-    """Integration tests going through DelayedRouteBuilder -> Delayer -> create_task."""
+class TestDelayedRouteBuilderSyncIntegration:
+    """Integration tests for sync delay() through DelayedRouteBuilder -> Delayer -> create_task."""
+
+    def setup_method(self):
+        from unittest.mock import Mock
+
+        from google.cloud import tasks_v2
+
+        from fastapi_cloud_tasks import DelayedRouteBuilder
+
+        mock_client = Mock(spec=tasks_v2.CloudTasksClient)
+        mock_client.create_task = Mock(return_value=Mock())
+
+        DelayedRoute = DelayedRouteBuilder(
+            client=mock_client,
+            base_url="http://worker:8000",
+            queue_path="projects/p/locations/l/queues/q",
+            auto_create_queue=False,
+        )
+
+        router = APIRouter(route_class=DelayedRoute, prefix="/tasks")
+
+        @router.post("/process/{task_id}")
+        async def process(task_id: str, p: Payload):
+            pass
+
+        @router.post("/simple")
+        async def simple(p: Payload = Payload(message="default")):
+            pass
+
+        app = FastAPI()
+        app.include_router(router)
+
+        self.mock_client = mock_client
+        self.process_route = router.routes[0]
+        self.simple_route = router.routes[1]
+
+    def test_sync_delay_with_path_and_body(self):
+        self.process_route.endpoint.delay(
+            task_id="abc", p=Payload(message="hello")
+        )
+        self.mock_client.create_task.assert_called_once()
+        request = self.mock_client.create_task.call_args[1]["request"]
+        assert "/tasks/process/abc" in request.task.http_request.url
+        assert b'"message": "hello"' in request.task.http_request.body
+
+    def test_sync_delay_with_default_body(self):
+        self.simple_route.endpoint.delay()
+        self.mock_client.create_task.assert_called_once()
+        request = self.mock_client.create_task.call_args[1]["request"]
+        assert b'"message": "default"' in request.task.http_request.body
+
+    def test_sync_delay_options_override_countdown(self):
+        self.simple_route.endpoint.options(countdown=300).delay()
+        self.mock_client.create_task.assert_called_once()
+        request = self.mock_client.create_task.call_args[1]["request"]
+        assert request.task.schedule_time is not None
+
+    def test_sync_delay_options_override_base_url(self):
+        self.simple_route.endpoint.options(
+            base_url="http://other:9000"
+        ).delay()
+        self.mock_client.create_task.assert_called_once()
+        request = self.mock_client.create_task.call_args[1]["request"]
+        assert request.task.http_request.url.startswith("http://other:9000")
+
+    def test_sync_delay_with_task_id_deduplication(self):
+        self.simple_route.endpoint.options(task_id="dedup-123").delay()
+        request = self.mock_client.create_task.call_args[1]["request"]
+        assert request.task.name == "projects/p/locations/l/queues/q/tasks/dedup-123"
+
+
+class TestDelayedRouteBuilderAsyncIntegration:
+    """Integration tests for async adelay() through DelayedRouteBuilder -> Delayer -> create_task."""
 
     def setup_method(self):
         from unittest.mock import AsyncMock, Mock
@@ -290,8 +362,8 @@ class TestDelayedRouteBuilderIntegration:
         self.simple_route = router.routes[1]
 
     @pytest.mark.asyncio
-    async def test_delay_with_path_and_body(self):
-        await self.process_route.endpoint.delay(
+    async def test_adelay_with_path_and_body(self):
+        await self.process_route.endpoint.adelay(
             task_id="abc", p=Payload(message="hello")
         )
         self.mock_client.create_task.assert_called_once()
@@ -300,30 +372,30 @@ class TestDelayedRouteBuilderIntegration:
         assert b'"message": "hello"' in request.task.http_request.body
 
     @pytest.mark.asyncio
-    async def test_delay_with_default_body(self):
-        await self.simple_route.endpoint.delay()
+    async def test_adelay_with_default_body(self):
+        await self.simple_route.endpoint.adelay()
         self.mock_client.create_task.assert_called_once()
         request = self.mock_client.create_task.call_args[1]["request"]
         assert b'"message": "default"' in request.task.http_request.body
 
     @pytest.mark.asyncio
-    async def test_delay_options_override_countdown(self):
-        await self.simple_route.endpoint.options(countdown=300).delay()
+    async def test_adelay_options_override_countdown(self):
+        await self.simple_route.endpoint.options(countdown=300).adelay()
         self.mock_client.create_task.assert_called_once()
         request = self.mock_client.create_task.call_args[1]["request"]
         assert request.task.schedule_time is not None
 
     @pytest.mark.asyncio
-    async def test_delay_options_override_base_url(self):
+    async def test_adelay_options_override_base_url(self):
         await self.simple_route.endpoint.options(
             base_url="http://other:9000"
-        ).delay()
+        ).adelay()
         self.mock_client.create_task.assert_called_once()
         request = self.mock_client.create_task.call_args[1]["request"]
         assert request.task.http_request.url.startswith("http://other:9000")
 
     @pytest.mark.asyncio
-    async def test_delay_with_task_id_deduplication(self):
-        await self.simple_route.endpoint.options(task_id="dedup-123").delay()
+    async def test_adelay_with_task_id_deduplication(self):
+        await self.simple_route.endpoint.options(task_id="dedup-123").adelay()
         request = self.mock_client.create_task.call_args[1]["request"]
         assert request.task.name == "projects/p/locations/l/queues/q/tasks/dedup-123"
